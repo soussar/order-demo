@@ -34,7 +34,34 @@ public class OrderServiceTest {
         assertThrows("null total", NullPointerException.class,
                 () -> service.isValidOrder(null));
 
-        System.out.println("ALL 9 TESTS PASSED");
+        assertDiscount(service, "10 percent discount", "100.00", "10", "90");
+        assertDiscount(service, "25 percent discount", "80.00", "25", "60");
+        assertDiscount(service, "fractional discount", "19.99", "12.5", "17.49125");
+        assertDiscount(service, "zero discount", "50.00", "0", "50");
+        assertDiscount(service, "full discount", "100.00", "100", "0");
+        assertDiscount(service, "zero amount", "0.00", "12.5", "0");
+        assertThrows("negative amount", IllegalArgumentException.class,
+                () -> service.applyDiscount(new BigDecimal("-0.01"), BigDecimal.TEN));
+        assertThrows("negative discount", IllegalArgumentException.class,
+                () -> service.applyDiscount(BigDecimal.TEN, new BigDecimal("-0.01")));
+        assertThrows("discount over 100", IllegalArgumentException.class,
+                () -> service.applyDiscount(BigDecimal.TEN, new BigDecimal("100.01")));
+        assertThrows("null amount", NullPointerException.class,
+                () -> service.applyDiscount(null, BigDecimal.TEN));
+        assertThrows("null discount", NullPointerException.class,
+                () -> service.applyDiscount(BigDecimal.TEN, null));
+
+        System.out.println("ALL 20 TESTS PASSED");
+    }
+
+    private static void assertDiscount(OrderService service, String name,
+            String amount, String discountPercent, String expected) {
+        BigDecimal actual = service.applyDiscount(
+                new BigDecimal(amount), new BigDecimal(discountPercent));
+        if (actual.compareTo(new BigDecimal(expected)) != 0) {
+            throw new AssertionError(name + ": expected " + expected + " but got " + actual);
+        }
+        System.out.println("TEST PASSED: " + name);
     }
 
     // Explicit checks stay active even when java is run without -ea.

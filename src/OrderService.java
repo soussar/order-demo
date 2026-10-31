@@ -32,6 +32,30 @@ public class OrderService {
     }
 
     /**
+     * Applies a percentage discount without rounding.
+     *
+     * @throws NullPointerException if amount or discountPercent is null
+     * @throws IllegalArgumentException if amount is negative or discountPercent
+     *         is outside the inclusive range 0 to 100
+     */
+    public BigDecimal applyDiscount(
+            BigDecimal amount,
+            BigDecimal discountPercent) {
+
+        Objects.requireNonNull(amount, "amount must not be null");
+        Objects.requireNonNull(discountPercent, "discountPercent must not be null");
+        if (amount.signum() < 0) {
+            throw new IllegalArgumentException("amount must not be negative");
+        }
+        if (discountPercent.signum() < 0
+                || discountPercent.compareTo(BigDecimal.valueOf(100)) > 0) {
+            throw new IllegalArgumentException("discountPercent must be between 0 and 100");
+        }
+
+        return amount.subtract(amount.multiply(discountPercent).movePointLeft(2));
+    }
+
+    /**
      * Preserves the rule that only strictly positive totals are valid.
      * The sign check is independent of the amount's decimal scale.
      *
