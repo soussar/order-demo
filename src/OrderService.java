@@ -8,6 +8,22 @@ import java.util.Objects;
  */
 public class OrderService {
 
+    /** Sums exact line totals without currency rounding. */
+    public BigDecimal calculateTotal(Order order) {
+        Objects.requireNonNull(order, "order must not be null");
+        BigDecimal total = BigDecimal.ZERO;
+        for (OrderItem item : order.items()) {
+            total = total.add(calculateTotal(item.price(), item.quantity()));
+        }
+        return total;
+    }
+
+    /** Applies the discount to the exact aggregate, then rounds once. */
+    public BigDecimal calculatePayableAmount(Order order, BigDecimal discountPercent) {
+        BigDecimal discounted = applyDiscount(calculateTotal(order), discountPercent);
+        return MonetaryPolicy.round(discounted, order.currency());
+    }
+
     /**
      * Multiplies without rounding: currency scale and rounding policy belong to
      * the caller, since this service does not assume a particular currency.
