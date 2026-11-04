@@ -6,7 +6,9 @@
 
 \- This is a Java 21 order management project.
 
-\- The project currently uses plain Java without Maven or Gradle.
+\- The project uses a single Maven module with named domain packages.
+
+\- Keep the monetary domain framework-independent; Spring Boot REST is planned for a later checkpoint.
 
 \- Keep the implementation simple and maintainable.
 
@@ -30,7 +32,13 @@
 
 \- Run tests after modifying Java code.
 
-\- Use javac and java for the current project.
+\- Compile production and test sources with Maven: `mvn -o test-compile`.
+
+\- Execute the existing 58-scenario harness in PowerShell: `java -cp "target/classes;target/test-classes" com.example.orders.domain.OrderServiceTest`.
+
+\- Maven compiles the harness; execute its main method explicitly to run the scenarios.
+
+\- Keep Maven offline unless network access is explicitly approved.
 
 \- Report test results accurately.
 

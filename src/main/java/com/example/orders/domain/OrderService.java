@@ -1,3 +1,5 @@
+package com.example.orders.domain;
+
 import java.math.BigDecimal;
 import java.util.Objects;
 

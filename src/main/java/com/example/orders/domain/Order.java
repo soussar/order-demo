@@ -1,3 +1,5 @@
+package com.example.orders.domain;
+
 import java.util.Currency;
 import java.util.List;
 import java.util.Objects;
