@@ -6,7 +6,11 @@ import com.example.orders.domain.OrderService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.Arguments;
+import jakarta.servlet.Filter;
+import org.springframework.core.annotation.AnnotationAwareOrderComparator;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
@@ -19,6 +23,11 @@ import org.springframework.web.context.WebApplicationContext;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.Stream;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
@@ -30,6 +39,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.MOCK)
 class HttpErrorContractTest {
     private static final String PATH = "/api/orders/calculate";
+    private static final String EXPECTED_ID_ATTRIBUTE = HttpErrorContractTest.class.getName() + ".expectedRequestId";
     private static final String VALID = """
             {"currency":"USD","items":[{"price":"1.00","quantity":1}],"discountPercent":"0"}
             """;
@@ -37,11 +47,17 @@ class HttpErrorContractTest {
     private WebApplicationContext context;
     private MockMvc mvc;
     private MockMvc failing;
+    private Filter[] filters;
 
     @BeforeEach
     void setUp() {
+        List<Filter> ordered = new ArrayList<>(List.of(context.getBean(RequestIdFilter.class),
+                context.getBean(CalculationBodyLimitFilter.class)));
+        AnnotationAwareOrderComparator.sort(ordered);
+        assertInstanceOf(RequestIdFilter.class, ordered.getFirst());
+        filters = ordered.toArray(Filter[]::new);
         mvc = MockMvcBuilders.webAppContextSetup(context)
-                .addFilters(context.getBean(CalculationBodyLimitFilter.class)).build();
+                .addFilters(filters).alwaysExpect(this::assertSingleRequestId).build();
         OrderService broken = new OrderService() {
             @Override
             public BigDecimal calculateTotal(Order order) {
@@ -50,15 +66,27 @@ class HttpErrorContractTest {
         };
         failing = MockMvcBuilders.standaloneSetup(new CalculateOrderController(
                         new CalculateOrderUseCase(broken), new OrderRestMapper(new OrderService())))
-                .setControllerAdvice(new RestExceptionHandler()).build();
+                .setControllerAdvice(new RestExceptionHandler()).addFilters(filters)
+                .alwaysExpect(this::assertSingleRequestId).build();
+    }
+
+    static Stream<Arguments> requestHeaders() {
+        return Stream.of("*/*", "application/json", "application/problem+json", "text/plain")
+                .flatMap(accept -> Stream.of(
+                        Arguments.of(accept, new String[0], null),
+                        Arguments.of(accept, new String[]{"caller-123"}, "caller-123"),
+                        Arguments.of(accept, new String[]{"Trace_02.alpha-XYZ"}, "Trace_02.alpha-XYZ"),
+                        Arguments.of(accept, new String[]{"invalid id"}, null),
+                        Arguments.of(accept, new String[]{"duplicate", "duplicate"}, null),
+                        Arguments.of(accept, new String[]{"first,second"}, null)));
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"*/*", "application/json", "application/problem+json", "text/plain"})
-    void successAndValidationRespectEndpointProduces(String accept) throws Exception {
+    @MethodSource("requestHeaders")
+    void successAndValidationRespectEndpointProduces(String accept, String[] ids, String expectedId) throws Exception {
         boolean supportsSuccess = accept.equals("*/*") || accept.equals("application/json");
-        ResultActions success = mvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON)
-                .accept(accept).content(VALID));
+        ResultActions success = mvc.perform(withIds(post(PATH).contentType(MediaType.APPLICATION_JSON)
+                .accept(accept).content(VALID), ids, expectedId));
         if (supportsSuccess) {
             success.andExpect(status().isOk())
                     .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
@@ -67,27 +95,27 @@ class HttpErrorContractTest {
         }
         for (String body : new String[]{"{", VALID.replace("\"1.00\"", "\"1E+1000000000\""),
                 VALID.replace("\"quantity\":1", "\"quantity\":10001")}) {
-            assertProblem(mvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON)
-                            .accept(accept).content(body)),
+            assertProblem(mvc.perform(withIds(post(PATH).contentType(MediaType.APPLICATION_JSON)
+                            .accept(accept).content(body), ids, expectedId)),
                     supportsSuccess ? 400 : 406, supportsSuccess ? "Bad Request" : "Not Acceptable");
         }
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"*/*", "application/json", "application/problem+json", "text/plain"})
-    void frameworkErrorsKeepStatusHeadersAndProblemBody(String accept) throws Exception {
-        assertProblem(mvc.perform(get(PATH).accept(accept)), 405, "Method Not Allowed")
+    @MethodSource("requestHeaders")
+    void frameworkErrorsKeepStatusHeadersAndProblemBody(String accept, String[] ids, String expectedId) throws Exception {
+        assertProblem(mvc.perform(withIds(get(PATH).accept(accept), ids, expectedId)), 405, "Method Not Allowed")
                 .andExpect(header().string("Allow", "POST"));
-        assertProblem(mvc.perform(post(PATH).accept(accept).contentType(MediaType.TEXT_PLAIN)
-                .content(VALID)), 415, "Unsupported Media Type");
+        assertProblem(mvc.perform(withIds(post(PATH).accept(accept).contentType(MediaType.TEXT_PLAIN)
+                .content(VALID), ids, expectedId)), 415, "Unsupported Media Type");
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"*/*", "application/json", "application/problem+json", "text/plain"})
-    void unexpectedFailureIsSanitizedWhenEndpointCanBeSelected(String accept) throws Exception {
+    @MethodSource("requestHeaders")
+    void unexpectedFailureIsSanitizedWhenEndpointCanBeSelected(String accept, String[] ids, String expectedId) throws Exception {
         boolean supportsSuccess = accept.equals("*/*") || accept.equals("application/json");
-        assertProblem(failing.perform(post(PATH).contentType(MediaType.APPLICATION_JSON)
-                        .accept(accept).content(VALID)),
+        assertProblem(failing.perform(withIds(post(PATH).contentType(MediaType.APPLICATION_JSON)
+                        .accept(accept).content(VALID), ids, expectedId)),
                 supportsSuccess ? 500 : 406, supportsSuccess ? "Internal Server Error" : "Not Acceptable")
                 .andExpect(content().string(not(containsString("private-internal-marker"))))
                 .andExpect(content().string(not(containsString("IllegalStateException"))))
@@ -95,16 +123,16 @@ class HttpErrorContractTest {
                 .andExpect(jsonPath("$.trace").doesNotExist())
                 .andExpect(jsonPath("$.exception").doesNotExist());
         if (supportsSuccess) {
-            failing.perform(post(PATH).contentType(MediaType.APPLICATION_JSON).accept(accept).content(VALID))
+            failing.perform(withIds(post(PATH).contentType(MediaType.APPLICATION_JSON).accept(accept).content(VALID), ids, expectedId))
                     .andExpect(jsonPath("$.detail").value("An unexpected error occurred"));
         }
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"*/*", "application/json", "application/problem+json", "text/plain"})
-    void oversizedBodyHasSafeProblemContractBeforeHandlerSelection(String accept) throws Exception {
-        assertProblem(mvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON).accept(accept)
-                        .content(" ".repeat(CalculationBodyLimitFilter.MAX_BODY_BYTES + 1))), 400, "Bad Request")
+    @MethodSource("requestHeaders")
+    void oversizedBodyHasSafeProblemContractBeforeHandlerSelection(String accept, String[] ids, String expectedId) throws Exception {
+        assertProblem(mvc.perform(withIds(post(PATH).contentType(MediaType.APPLICATION_JSON).accept(accept)
+                        .content(" ".repeat(CalculationBodyLimitFilter.MAX_BODY_BYTES + 1)), ids, expectedId)), 400, "Bad Request")
                 .andExpect(jsonPath("$.detail").value("Request body must not exceed 32768 bytes"));
     }
 
@@ -137,8 +165,10 @@ class HttpErrorContractTest {
             request.setContent(new byte[CalculationBodyLimitFilter.MAX_BODY_BYTES + 1]);
             request.addHeader("Accept", "application/json");
             MockHttpServletResponse response = new MockHttpServletResponse();
-            context.getBean(CalculationBodyLimitFilter.class).doFilter(request, response,
-                    (req, res) -> fail("Rejected body must not reach MVC"));
+            filters[0].doFilter(request, response, (req, res) -> filters[1].doFilter(req, res,
+                    (ignoredRequest, ignoredResponse) -> fail("Rejected body must not reach MVC")));
+            assertEquals(1, response.getHeaders(RequestIdFilter.HEADER_NAME).size());
+            assertEquals(4, UUID.fromString(response.getHeader(RequestIdFilter.HEADER_NAME)).version());
             assertEquals(400, response.getStatus());
             assertEquals(MediaType.APPLICATION_PROBLEM_JSON_VALUE, response.getContentType());
             var problem = mapper.readTree(response.getContentAsByteArray());
@@ -151,6 +181,34 @@ class HttpErrorContractTest {
             assertEquals(PATH, problem.get("instance").asString());
             assertEquals("Request body must not exceed 32768 bytes", problem.get("detail").asString());
         }
+    }
+
+    // A null expected ID explicitly means UUID replacement/generation.
+    private MockHttpServletRequestBuilder withIds(MockHttpServletRequestBuilder request, String[] ids, String expectedId) {
+        for (String id : ids) {
+            request.header(RequestIdFilter.HEADER_NAME, id);
+        }
+        if (expectedId != null) {
+            request.requestAttr(EXPECTED_ID_ATTRIBUTE, expectedId);
+        }
+        return request;
+    }
+
+    private void assertSingleRequestId(org.springframework.test.web.servlet.MvcResult result) {
+        var response = result.getResponse();
+        assertEquals(1, response.getHeaders(RequestIdFilter.HEADER_NAME).size());
+        String actual = response.getHeader(RequestIdFilter.HEADER_NAME);
+        var supplied = Collections.list(result.getRequest().getHeaders(RequestIdFilter.HEADER_NAME));
+        String expectedId = (String) result.getRequest().getAttribute(EXPECTED_ID_ATTRIBUTE);
+        if (expectedId != null) {
+            assertEquals(expectedId, actual);
+        } else {
+            assertNotNull(actual);
+            assertEquals(actual, UUID.fromString(actual).toString());
+            assertEquals(4, UUID.fromString(actual).version());
+            assertFalse(supplied.contains(actual));
+        }
+        assertEquals(actual, result.getRequest().getAttribute(RequestIdFilter.REQUEST_ATTRIBUTE));
     }
 
     private ResultActions assertProblem(ResultActions result, int status, String title) throws Exception {

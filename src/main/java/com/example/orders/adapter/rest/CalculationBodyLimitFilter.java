@@ -11,6 +11,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ProblemDetail;
 import org.springframework.stereotype.Component;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.web.filter.OncePerRequestFilter;
 import tools.jackson.databind.ObjectMapper;
 
@@ -23,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 
 /** Bounds JSON allocation before deserialization, including requests without Content-Length. */
 @Component
+@Order(Ordered.HIGHEST_PRECEDENCE + 20)
 public final class CalculationBodyLimitFilter extends OncePerRequestFilter {
     static final int MAX_BODY_BYTES = 32 * 1024;
     private final ObjectMapper objectMapper;
