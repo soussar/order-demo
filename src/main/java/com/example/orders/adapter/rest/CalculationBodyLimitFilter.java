@@ -53,8 +53,21 @@ public final class CalculationBodyLimitFilter extends OncePerRequestFilter {
             return;
         }
         chain.doFilter(new HttpServletRequestWrapper(request) {
+            private ServletInputStream inputStream;
+            private BufferedReader reader;
+
             @Override
             public ServletInputStream getInputStream() {
+                if (reader != null) {
+                    throw new IllegalStateException("getReader() has already been called");
+                }
+                if (inputStream == null) {
+                    inputStream = createInputStream();
+                }
+                return inputStream;
+            }
+
+            private ServletInputStream createInputStream() {
                 ByteArrayInputStream input = new ByteArrayInputStream(body);
                 return new ServletInputStream() {
                     @Override
@@ -86,7 +99,13 @@ public final class CalculationBodyLimitFilter extends OncePerRequestFilter {
 
             @Override
             public BufferedReader getReader() {
-                return new BufferedReader(new InputStreamReader(getInputStream(), StandardCharsets.UTF_8));
+                if (inputStream != null) {
+                    throw new IllegalStateException("getInputStream() has already been called");
+                }
+                if (reader == null) {
+                    reader = new BufferedReader(new InputStreamReader(createInputStream(), StandardCharsets.UTF_8));
+                }
+                return reader;
             }
 
             @Override
