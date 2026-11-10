@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 21
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Print tool versions
+        run: |
+          java -version
+          mvn --version
+
+      - name: Build and run Maven tests
+        # .mvn/maven.config selects the project-local .maven-repository.
+        run: mvn --batch-mode --no-transfer-progress clean verify
+
+      - name: Run standalone domain harness
+        run: java -cp "target/classes:target/test-classes" com.example.orders.domain.OrderServiceTest
