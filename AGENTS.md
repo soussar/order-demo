@@ -8,7 +8,7 @@
 
 \- The project uses a single Maven module with named domain packages.
 
-\- Keep the monetary domain framework-independent; Spring Boot REST is planned for a later checkpoint.
+\- Keep the monetary domain framework-independent; Spring Boot REST support is implemented in the REST adapter.
 
 \- Keep the implementation simple and maintainable.
 
